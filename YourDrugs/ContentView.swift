@@ -7,38 +7,71 @@
 
 import SwiftUI
 import AVFoundation
+import Foundation
+
+struct ProductLookupResult: Decodable {
+    let products: [Product]
+}
+
+struct Product: Decodable {
+    let title: String
+    let brand: String?
+    let description: String?
+    let ingredients: String?
+}
+
+func fetchProduct(by barcode: String, completion: @escaping (Product?) -> Void) {
+    let apiKey = "42miy4tmiqdmiimz69biwezag709uo"
+    let urlStr = "https://api.barcodelookup.com/v3/products?barcode=\(barcode)&formatted=y&key=\(apiKey)"
+    print("🌍 URL: \(urlStr)")
+
+    guard let url = URL(string: urlStr) else {
+        completion(nil)
+        return
+    }
+
+    URLSession.shared.dataTask(with: url) { data, response, error in
+        if let error = error {
+            print("❌ Request error: \(error.localizedDescription)")
+        }
+
+        if let httpResponse = response as? HTTPURLResponse {
+            print("📡 HTTP status code: \(httpResponse.statusCode)")
+        }
+
+        if let data = data {
+            print("📨 Raw JSON:")
+            print(String(data: data, encoding: .utf8) ?? "⚠️ Cannot decode JSON to string")
+        }
+
+        do {
+            let result = try JSONDecoder().decode(ProductLookupResult.self, from: data!)
+            print("✅ Decoded product count: \(result.products.count)")
+
+            if let product = result.products.first {
+                print("🎯 Found product: \(product.title)")
+                completion(product)
+            } else {
+                print("⚠️ No products found in API response.")
+                completion(nil)
+            }
+        } catch {
+            print("❌ JSON decode failed: \(error)")
+            completion(nil)
+        }
+    }.resume()
+
+}
 
 struct ContentView: View {
     var body: some View {
         NavigationView {
             List {
-                NavigationLink("Update health data", destination: HealthInfoView())
+                NavigationLink("Update Health data", destination: HealthFormView())
                 NavigationLink("Scan drug", destination: ScanView())
             }
             .navigationTitle("YourDrugs")
         }
-    }
-}
-
-struct HealthInfoView: View {
-    @State private var allergies: String = ""
-    @State private var chronicConditions: String = ""
-
-    var body: some View {
-        Form {
-            Section(header: Text("Allergy")) {
-                TextField("Ie. penicillin", text: $allergies)
-            }
-
-            Section(header: Text("Chronic conditions")) {
-                TextField("Ie. diebetes", text: $chronicConditions)
-            }
-
-            Button("Save") {
-                // Tu zapisze dane do UserDefaults lub CoreData
-            }
-        }
-        .navigationTitle("Health data")
     }
 }
 
@@ -61,7 +94,20 @@ struct ScanView: View {
                     case .success(let code):
                         scannedCode = code
                         isShowingScanner = false
-                        checkForWarnings(ean: code)
+                        print("📦 Scanned barcode: \(code)")
+                        fetchProduct(by: code) { product in
+                            DispatchQueue.main.async {
+                                if let product = product {
+                                    resultText = """
+                                    ✅ Found: \(product.title)
+                                    🏷 Brand: \(product.brand ?? "-")
+                                    🧪 Ingredients: \(product.ingredients ?? "-")
+                                    """
+                                } else {
+                                    resultText = "Cannot find drug for this EAN."
+                                }
+                            }
+                        }
                     case .failure:
                         resultText = "Scan error. Try again."
                         isShowingScanner = false
@@ -73,7 +119,6 @@ struct ScanView: View {
     }
 
     func checkForWarnings(ean: String) {
-        // Przykład: W prawdziwej aplikacji tutaj będzie wywołanie API
         let simulatedDangerousSubstance = ["1234567890123": "Contain penicillin"]
 
         if let warning = simulatedDangerousSubstance[ean] {
@@ -83,9 +128,6 @@ struct ScanView: View {
         }
     }
 }
-
-// MARK: - Minimalna implementacja kodu skanera
-// Do działania wymagany będzie CodeScannerView lub podpięcie AVFoundation
 
 struct CodeScannerView: UIViewControllerRepresentable {
     var completion: (Result<String, Error>) -> Void
