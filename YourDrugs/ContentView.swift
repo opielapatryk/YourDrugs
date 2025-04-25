@@ -2,71 +2,18 @@
 //  ContentView.swift
 //  YourDrugs
 //
-//  Created by Patryk Opiela on 21/04/2025.
+//  Created by Patryk Opiela on 23/04/2025.
 //
 
 import SwiftUI
 import AVFoundation
-import Foundation
 
-struct ProductLookupResult: Decodable {
-    let products: [Product]
-}
-
-struct Product: Decodable {
-    let title: String
-    let brand: String?
-    let description: String?
-    let ingredients: String?
-}
-
-func fetchProduct(by barcode: String, completion: @escaping (Product?) -> Void) {
-    let apiKey = "42miy4tmiqdmiimz69biwezag709uo"
-    let urlStr = "https://api.barcodelookup.com/v3/products?barcode=\(barcode)&formatted=y&key=\(apiKey)"
-    print("🌍 URL: \(urlStr)")
-
-    guard let url = URL(string: urlStr) else {
-        completion(nil)
-        return
-    }
-
-    URLSession.shared.dataTask(with: url) { data, response, error in
-        if let error = error {
-            print("❌ Request error: \(error.localizedDescription)")
-        }
-
-        if let httpResponse = response as? HTTPURLResponse {
-            print("📡 HTTP status code: \(httpResponse.statusCode)")
-        }
-
-        if let data = data {
-            print("📨 Raw JSON:")
-            print(String(data: data, encoding: .utf8) ?? "⚠️ Cannot decode JSON to string")
-        }
-
-        do {
-            let result = try JSONDecoder().decode(ProductLookupResult.self, from: data!)
-            print("✅ Decoded product count: \(result.products.count)")
-
-            if let product = result.products.first {
-                print("🎯 Found product: \(product.title)")
-                completion(product)
-            } else {
-                print("⚠️ No products found in API response.")
-                completion(nil)
-            }
-        } catch {
-            print("❌ JSON decode failed: \(error)")
-            completion(nil)
-        }
-    }.resume()
-
-}
 
 struct ContentView: View {
     var body: some View {
         NavigationView {
             List {
+                APIKeyAlertView()
                 NavigationLink("Update Health data", destination: HealthFormView())
                 NavigationLink("Scan drug", destination: ScanView())
             }
@@ -76,14 +23,24 @@ struct ContentView: View {
 }
 
 struct ScanView: View {
+    @FetchRequest(
+        sortDescriptors: [],
+        animation: .default
+    ) private var healthInfos: FetchedResults<HealthInfo>
+
     @State private var isShowingScanner = false
     @State private var scannedCode: String = ""
     @State private var resultText: String = "Scan drug, to check contraindications."
+    @State private var isLoading: Bool = false
 
     var body: some View {
         VStack(spacing: 20) {
-            Text(resultText)
-                .padding()
+            if isLoading {
+                ProgressView("Analyzing...")
+            } else {
+                Text(resultText)
+                    .padding()
+            }
 
             Button("Scan code") {
                 isShowingScanner = true
@@ -94,20 +51,22 @@ struct ScanView: View {
                     case .success(let code):
                         scannedCode = code
                         isShowingScanner = false
+                        isLoading = true
                         print("📦 Scanned barcode: \(code)")
-                        fetchProduct(by: code) { product in
+
+                        let allergies = healthInfos.last?.allergies ?? ""
+                        let conditions = healthInfos.last?.chronicDiseases ?? ""
+
+                        analyzeDrugSafety(drugBarcode: code,
+                                          allergies: allergies,
+                                          conditions: conditions) { result in
                             DispatchQueue.main.async {
-                                if let product = product {
-                                    resultText = """
-                                    ✅ Found: \(product.title)
-                                    🏷 Brand: \(product.brand ?? "-")
-                                    🧪 Ingredients: \(product.ingredients ?? "-")
-                                    """
-                                } else {
-                                    resultText = "Cannot find drug for this EAN."
-                                }
+                                isLoading = false
+                                resultText = result ?? "No response from Claude."
                             }
                         }
+
+
                     case .failure:
                         resultText = "Scan error. Try again."
                         isShowingScanner = false
@@ -116,16 +75,6 @@ struct ScanView: View {
             }
         }
         .navigationTitle("Scanning")
-    }
-
-    func checkForWarnings(ean: String) {
-        let simulatedDangerousSubstance = ["1234567890123": "Contain penicillin"]
-
-        if let warning = simulatedDangerousSubstance[ean] {
-            resultText = "WARNING: \(warning) - do not reccomend with your health conditions."
-        } else {
-            resultText = "There no contraindications for using this drug."
-        }
     }
 }
 
